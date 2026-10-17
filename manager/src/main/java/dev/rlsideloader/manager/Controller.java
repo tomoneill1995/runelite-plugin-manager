@@ -60,6 +60,7 @@ final class Controller
 	private final Map<String, List<PluginInfo>> projects = new ConcurrentHashMap<>();
 
 	private final PluginHub hub = new PluginHub();
+	private final JdkProvider jdks = new JdkProvider();
 	/** Plugin Hub entries as PluginInfo, rebuilt when the manifest loads */
 	private volatile List<PluginInfo> hubInfos = List.of();
 	private final ExecutorService iconLoader = Executors.newFixedThreadPool(3, r -> daemon(r, "icons"));
@@ -724,7 +725,9 @@ final class Controller
 		log("Building " + row.displayName() + " (gradle " + task + ")");
 		try
 		{
-			Path jar = GradleBuilder.build(row.path(), task, row.settings().javaHome, this::log);
+			String override = row.settings().javaHome;
+			Path javaHome = override != null && !override.isBlank() ? Path.of(override) : jdks.jdk11(this::log);
+			Path jar = GradleBuilder.build(row.path(), task, javaHome, this::log);
 			log("Built " + jar.getFileName());
 			return jar;
 		}

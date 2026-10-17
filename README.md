@@ -59,18 +59,31 @@ third-party client rules can still get you banned, sideloaded or not.
 
 ## Run it
 
-Needs Windows, RuneLite installed from runelite.net, Git, and a Java 11 JDK for building plugins from
-source (Plugin Hub plugins don't need building).
+1. Grab `RuneLite-Plugin-Manager-<version>-windows.zip` from Releases.
+2. Unzip it anywhere.
+3. Run `RuneLite Plugin Manager.exe`.
+
+No Java install needed, it brings its own. You need Windows and RuneLite installed from runelite.net.
+
+- **Plugin Hub plugins**: nothing else needed.
+- **GitHub sources**: needs [Git](https://git-scm.com/download/win).
+- **Building from source**: needs a Java 11 JDK. If you don't have one, the manager downloads Eclipse
+  Temurin 11 into `~/.rl-sideloader/jdks` the first time a build needs it (~190 MB, checksum verified).
+  Already have one installed? It uses that.
+
+Settings live in `~/.rl-sideloader/manager.json`, the log in `~/.rl-sideloader/manager.log`.
+
+## Build it yourself
+
+Needs a JDK 17 (for `jpackage`).
 
 ```
 gradlew.bat build
-tools\manager.bat
+gradlew.bat :manager:zipApp
 ```
 
-`manager.bat` runs the manager on RuneLite's bundled Java, so whatever Java is on your PATH doesn't
-matter.
-
-Settings live in `~/.rl-sideloader/manager.json`, the log in `~/.rl-sideloader/manager.log`.
+The app lands in `manager/build/package/`, the zip in `manager/build/release/`. For a quick run
+without packaging, `tools\manager.bat` starts the jar on RuneLite's bundled Java.
 
 ## Known gaps
 

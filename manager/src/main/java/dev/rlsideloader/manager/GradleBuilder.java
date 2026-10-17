@@ -24,20 +24,28 @@ final class GradleBuilder
 	{
 	}
 
-	static Path build(Path repo, String task, String javaHome, Consumer<String> log) throws IOException, InterruptedException
+	/**
+	 * @param javaHome JDK to run Gradle with and to offer as a toolchain; the Plugin Hub
+	 *                 template asks for a Java 11 toolchain, so this is normally a JDK 11
+	 */
+	static Path build(Path repo, String task, Path javaHome, Consumer<String> log) throws IOException, InterruptedException
 	{
 		// a plugin inside a multi-plugin repo uses the wrapper from the repo root
 		List<String> command = new ArrayList<>(List.of("cmd", "/c"));
 		command.add(findWrapper(repo).map(Path::toString).orElse("gradle"));
 		command.addAll(List.of("-p", repo.toString(), task, "--console=plain"));
+		if (javaHome != null)
+		{
+			command.add("-Porg.gradle.java.installations.paths=" + javaHome);
+		}
 
 		long started = System.currentTimeMillis();
 		ProcessBuilder pb = new ProcessBuilder(command)
 			.directory(repo.toFile())
 			.redirectErrorStream(true);
-		if (javaHome != null && !javaHome.isBlank())
+		if (javaHome != null)
 		{
-			pb.environment().put("JAVA_HOME", javaHome);
+			pb.environment().put("JAVA_HOME", javaHome.toString());
 		}
 		Process process = pb.start();
 		process.getOutputStream().close();

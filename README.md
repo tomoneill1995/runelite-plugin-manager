@@ -1,103 +1,104 @@
 # RuneLite Plugin Manager
 
-Sideload plugins into the **normal RuneLite** from runelite.net. No developer mode, no fork, no custom
-client. Install, turn on, turn off and hot reload plugins while the game is open.
+A plugin manager for the regular RuneLite you download from runelite.net. It loads plugins into the
+client while it's running, so you can install, enable, disable and reload them without restarting.
+You don't need developer mode or a modified client.
 
 ![Installed plugins](docs/installed.png)
 
-## What it does
+## Sources
 
-Pulls plugins from wherever they live and shows them in one place, Plugin Hub style:
+You can browse plugins from a few different places:
 
-| Source | What you get |
+| Source | Notes |
 |---|---|
-| Official Plugin Hub | All ~2,600 Hub plugins. Prebuilt jars from repo.runelite.net, manifest signature and jar hash checked the same way RuneLite does it. |
-| GitHub repo | `owner/repo` or any git URL. One plugin or a repo full of them. Built from source with Gradle, pulled and rebuilt when it changes. |
-| Local project | A plugin you're working on. Tick auto-reload and it rebuilds and swaps itself in every time you save. |
-| Jar folder | A folder of built plugin jars. |
+| Official Plugin Hub | All ~2,600 Hub plugins. Downloads the same prebuilt jars RuneLite does and checks the manifest signature and jar hashes the same way. |
+| GitHub repo | `owner/repo` or any git URL. Works with single plugin repos and repos that contain lots of plugins. Builds from source with Gradle and rebuilds when you pull changes. |
+| Local project | For plugins you're developing. Turn on auto-reload and it rebuilds and reloads every time you save a file. |
+| Jar folder | A folder of already built plugin jars. |
 
 ![Browse](docs/browse.png)
 
-- **Installed**: on/off switch per plugin, loads or unloads it live. Reload rebuilds and swaps it in.
-- **Browse**: search everything, see name, author, description, tags, icon. Install pulls in anything it needs.
-- **Sources**: add GitHub repos, local projects, jar folders, or scan a folder for plugin projects.
-- **Launch RuneLite**: starts the official client with the manager hooked in. Plugins load once it hits the login screen.
+The Installed tab has an on/off switch for each plugin, which loads or unloads it straight away, and a
+reload button. Browse lets you search across every source and install from there. The Sources tab is
+where you add GitHub repos, local projects and jar folders.
 
-Plugin repos with shared API plugins work too. If a plugin needs another one (`project(':Other')` in
-Gradle or `@PluginDependency`), the dependency installs and loads first, and reloading it reloads
-everything that uses it.
+Launch RuneLite starts the official client with the manager attached. Plugins load when it gets to the
+login screen.
+
+If a plugin depends on another one (a `project(':Other')` dependency in Gradle, or
+`@PluginDependency`), the dependency gets installed and loaded first. Reloading a dependency also
+reloads the plugins that use it.
 
 ## How it works
 
-Two parts.
+There's a small Java agent that gets added to RuneLite's JVM arguments when it launches. After the
+client starts, the agent loads plugin jars through RuneLite's own `PluginManager`, which is the same
+thing RuneLite does when you install a plugin from the Plugin Hub. It listens for commands on
+`127.0.0.1` and needs a random token that the manager reads from disk.
 
-- **agent**: a small Java agent added to RuneLite's JVM arguments at launch. Once the client is up, it
-  loads plugin jars through RuneLite's own `PluginManager`, the same path RuneLite uses when you install
-  something from the Plugin Hub. It listens on `127.0.0.1` only, behind a random token.
-- **manager**: the app in the screenshots. Builds, downloads and stages jars, and tells the agent what to
-  load.
+The manager is the app in the screenshots. It builds or downloads jars and tells the agent what to load.
 
-The RuneLite install itself isn't touched. The launcher still updates and hash-checks the client like
-normal; the agent is just one extra JVM argument.
+Your RuneLite install isn't modified. The launcher still updates and verifies the client as normal.
+The agent is just an extra JVM argument.
 
-## Client side only
+## Privacy
 
-Everything happens on your machine. The manager talks to GitHub (git), repo.runelite.net (Plugin Hub
-manifest, jars, icons) and the agent on localhost. Nothing goes to Jagex.
+Everything runs locally. The manager connects to GitHub (through git), repo.runelite.net for Plugin
+Hub data, and the agent on localhost. It doesn't talk to Jagex.
 
-What RuneLite itself can see, checked against the RuneLite source:
+Here's what RuneLite itself sends, going by the RuneLite source:
 
-| | Sent anywhere? |
+| | |
 |---|---|
-| Telemetry ping, error reports, crash logs | Off by default here (`--disable-telemetry`). Crash logs would include JVM arguments otherwise. |
-| RuneLite's Plugin Hub install stats | Only lists plugins installed through RuneLite's own hub. Sideloaded ones aren't in it. |
-| RuneLite profile sync | If you sync profiles to a RuneLite account, plugin config (including sideloaded plugins') goes with it. |
+| Telemetry, error reports, crash logs | Turned off by default here with `--disable-telemetry`. If you turn it back on, crash logs include the JVM arguments. |
+| Plugin Hub install stats | Only includes plugins installed through RuneLite's own Plugin Hub. Sideloaded plugins aren't listed. |
+| Profile sync | If you sync your profile to a RuneLite account, plugin settings are uploaded, including settings for sideloaded plugins. |
 
-What Jagex's game code inside the same JVM could look at, I can't tell you. Plugins themselves are a
-different story: they can do whatever their code does, so only run ones you trust. Breaking Jagex's
-third-party client rules can still get you banned, sideloaded or not.
+I don't know what Jagex's code running in the same JVM can see or report. Plugins can do anything
+their code does, so only run plugins you trust. Plugins that break Jagex's third-party client rules can
+still get your account banned, however they're loaded.
 
-## Run it
+## Running it
 
-1. Grab `RuneLite-Plugin-Manager-<version>-windows.zip` from Releases.
-2. Unzip it anywhere.
-3. Run `RuneLite Plugin Manager.exe`.
+Download `RuneLite-Plugin-Manager-<version>-windows.zip` from Releases, unzip it and run
+`RuneLite Plugin Manager.exe`.
 
-No Java install needed, it brings its own. You need Windows and RuneLite installed from runelite.net.
+Java is bundled, so you don't need to install it. You do need Windows and RuneLite from runelite.net.
 
-- **Plugin Hub plugins**: nothing else needed.
-- **GitHub sources**: needs [Git](https://git-scm.com/download/win).
-- **Building from source**: needs a Java 11 JDK. If you don't have one, the manager downloads Eclipse
-  Temurin 11 into `~/.rl-sideloader/jdks` the first time a build needs it (~190 MB, checksum verified).
-  Already have one installed? It uses that.
+Plugin Hub plugins work with nothing else installed. GitHub sources need
+[Git](https://git-scm.com/download/win). Building plugins from source needs a Java 11 JDK. If you
+already have one installed the manager will use it, otherwise it downloads Eclipse Temurin 11
+(about 190 MB, checksum verified) into `~/.rl-sideloader/jdks` the first time it needs to build
+something.
 
-Settings live in `~/.rl-sideloader/manager.json`, the log in `~/.rl-sideloader/manager.log`.
+Settings are saved to `~/.rl-sideloader/manager.json` and the log is at `~/.rl-sideloader/manager.log`.
 
-## Build it yourself
+## Building
 
-Needs a JDK 17 (for `jpackage`).
+You need JDK 17 for `jpackage`.
 
 ```
 gradlew.bat build
 gradlew.bat :manager:zipApp
 ```
 
-The app lands in `manager/build/package/`, the zip in `manager/build/release/`. For a quick run
-without packaging, `tools\manager.bat` starts the jar on RuneLite's bundled Java.
+The app is written to `manager/build/package/` and the zip to `manager/build/release/`. To run it
+without packaging, use `tools\manager.bat`, which runs the jar with RuneLite's bundled Java.
 
-## Known gaps
+## Known issues
 
-- **Jagex accounts**: the manager's Launch button starts RuneLite directly, so there's no Jagex Launcher
-  session. Getting the agent in through "RuneLite (configure)" JVM arguments is untested.
-- **Kotlin plugins** need the Kotlin standard library bundled in their jar. RuneLite doesn't ship it.
-- Plugins with other third-party libraries need them bundled too.
-- Hot reload is as clean as the plugin's `shutDown`. Plugins that leave threads or static state behind
-  will leak a bit, restart now and then.
+- Jagex accounts: Launch RuneLite starts RuneLite directly, so you won't have a Jagex Launcher session.
+  Adding the agent through the JVM arguments in "RuneLite (configure)" might work but I haven't tested it.
+- Kotlin plugins need the Kotlin standard library bundled into their jar because RuneLite doesn't
+  include it. The same goes for any other third-party library a plugin uses.
+- Reloading is only as clean as the plugin's `shutDown`. If a plugin leaves threads or static state
+  behind, memory use will creep up over time and a restart fixes it.
 
-## Also in here
+## Other files
 
-- `test-plugin/`: tiny plugin that adds a sidebar button, handy for testing reloads.
-- `tools/launch.ps1` and `tools/rlctl.ps1`: start RuneLite with the agent and drive it from a terminal,
-  no manager needed.
+- `test-plugin/` is a small plugin that adds a sidebar button. I used it to test reloading.
+- `tools/launch.ps1` and `tools/rlctl.ps1` start RuneLite with the agent and control it from a
+  terminal without the manager.
 
 Not affiliated with RuneLite or Jagex.

@@ -26,6 +26,10 @@ where you add GitHub repos, local projects and jar folders.
 Launch RuneLite starts the official client with the manager attached. Plugins load when it gets to the
 login screen.
 
+You can launch more than one client. Each one shows up in the header, and a newly started client gets
+everything that's enabled loaded into it. With two or more running, a "Clients" selector appears:
+Enable, Disable and Reload apply to all of them, or to just the one you pick.
+
 If a plugin depends on another one (a `project(':Other')` dependency in Gradle, or
 `@PluginDependency`), the dependency gets installed and loaded first. Reloading a dependency also
 reloads the plugins that use it.
@@ -73,6 +77,10 @@ already have one installed the manager will use it, otherwise it downloads Eclip
 something.
 
 Settings are saved to `~/.rl-sideloader/manager.json` and the log is at `~/.rl-sideloader/manager.log`.
+
+Settings ▾ → "RuneLite JVM arguments…" lets you pass extra JVM arguments to the RuneLite client
+(for example `-Xmx2g`, or another `-javaagent:`). They go through the launcher's `RUNELITE_VMARGS`
+after the sideloader agent, so they win on conflicts, and apply from the next launch.
 
 ## Building
 

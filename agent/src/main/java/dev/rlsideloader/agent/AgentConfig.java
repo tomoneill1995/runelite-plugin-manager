@@ -84,4 +84,10 @@ final class AgentConfig
 	{
 		return home.resolve("agent.json");
 	}
+
+	/** One info file per running client lives here, so several clients can be managed at once */
+	Path getInfoDir()
+	{
+		return home.resolve("agents");
+	}
 }

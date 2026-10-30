@@ -14,6 +14,10 @@ import java.security.NoSuchAlgorithmException;
  * hash-verifies the client as normal. RuneLite.exe isn't used: starting it with the agent
  * exited before the client ran (its packr config sets runelite.launcher.nojvm, which probably
  * rules out the JVM launch mode this needs).
+ * <p>
+ * JVM arguments for the client go through the launcher's RUNELITE_VMARGS environment variable:
+ * the agent first, then any extra arguments the user configured, so theirs win on conflicts
+ * (e.g. their -Xmx overrides RuneLite's default).
  */
 final class RuneLiteLauncher
 {
@@ -23,7 +27,11 @@ final class RuneLiteLauncher
 	{
 	}
 
-	static Process launch(boolean disableTelemetry) throws IOException
+	/**
+	 * @param disableTelemetry start the client with --disable-telemetry
+	 * @param extraJvmArgs     extra JVM arguments for the client, whitespace separated; may be null or blank
+	 */
+	static Process launch(boolean disableTelemetry, String extraJvmArgs) throws IOException
 	{
 		Path install = Paths.RUNELITE_INSTALL;
 		Path javaw = install.resolve("jre").resolve("bin").resolve("javaw.exe");
@@ -42,7 +50,13 @@ final class RuneLiteLauncher
 
 		// The manager decides what to load, so the agent's own folder autoload is off
 		// home: so the agent writes agent.json where this manager looks for it
-		pb.environment().put("RUNELITE_VMARGS", "-javaagent:" + agent + "=autoload=false;home=" + Paths.HOME);
+		String vmArgs = "-javaagent:" + agent + "=autoload=false;home=" + Paths.HOME;
+		if (extraJvmArgs != null && !extraJvmArgs.isBlank())
+		{
+			vmArgs += " " + extraJvmArgs.trim();
+		}
+		pb.environment().put("RUNELITE_VMARGS", vmArgs);
+
 		if (disableTelemetry)
 		{
 			pb.environment().put("RUNELITE_ARGS", "--disable-telemetry");

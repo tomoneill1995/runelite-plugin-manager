@@ -15,7 +15,12 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * Talks to the agent running inside RuneLite over its 127.0.0.1 control channel.
@@ -111,25 +116,76 @@ final class AgentClient implements Closeable
 	}
 
 	/**
-	 * Connects to the running agent, or returns null if no client with the agent is running.
+	 * Every running client with the agent: one agents/{pid}.json per client, plus the legacy
+	 * agent.json an older agent build writes. Files left behind by killed clients are removed.
 	 */
-	static AgentClient tryConnect()
+	static List<Info> discover()
 	{
-		Path file = Paths.AGENT_INFO;
-		if (!Files.exists(file))
+		List<Path> files = new ArrayList<>();
+		if (Files.isDirectory(Paths.AGENTS_DIR))
+		{
+			try (Stream<Path> s = Files.list(Paths.AGENTS_DIR))
+			{
+				s.filter(p -> p.getFileName().toString().endsWith(".json")).forEach(files::add);
+			}
+			catch (IOException ignored)
+			{
+			}
+		}
+		if (Files.exists(Paths.AGENT_INFO))
+		{
+			files.add(Paths.AGENT_INFO);
+		}
+
+		List<Info> out = new ArrayList<>();
+		Set<Long> seen = new HashSet<>();
+		for (Path file : files)
+		{
+			Info info = read(file);
+			if (info == null || !seen.add(info.pid()))
+			{
+				continue;
+			}
+			if (!ProcessHandle.of(info.pid()).map(ProcessHandle::isAlive).orElse(false))
+			{
+				// left behind if RuneLite was killed
+				if (!file.equals(Paths.AGENT_INFO))
+				{
+					try
+					{
+						Files.deleteIfExists(file);
+					}
+					catch (IOException ignored)
+					{
+					}
+				}
+				continue;
+			}
+			out.add(info);
+		}
+		out.sort(Comparator.comparingLong(Info::pid));
+		return out;
+	}
+
+	private static Info read(Path file)
+	{
+		try
+		{
+			return GSON.fromJson(Files.readString(file), Info.class);
+		}
+		catch (IOException | RuntimeException e)
 		{
 			return null;
 		}
+	}
 
+	/**
+	 * Connects to one running agent, or returns null if it can't be reached.
+	 */
+	static AgentClient connect(Info info)
+	{
 		try
 		{
-			Info info = GSON.fromJson(Files.readString(file), Info.class);
-			// agent.json is left behind if RuneLite is killed
-			if (info == null || ProcessHandle.of(info.pid()).map(ProcessHandle::isAlive).orElse(false) == false)
-			{
-				return null;
-			}
-
 			Socket socket = new Socket();
 			socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), info.port()), 1000);
 			socket.setSoTimeout(TIMEOUT_MS);

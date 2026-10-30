@@ -24,7 +24,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Line-based control channel on 127.0.0.1 for the manager app.
  * <p>
- * The port and a random token are written to ~/.rl-sideloader/agent.json. A client must
+ * The port and a random token are written to ~/.rl-sideloader/agents/{pid}.json (one per
+ * running client) and to the legacy ~/.rl-sideloader/agent.json. A client must
  * send "AUTH token" first; every command then gets one reply line, "OK [json]" or "ERR message".
  * <pre>
  * PING                 -> OK "pong"
@@ -77,14 +78,24 @@ final class ControlServer
 
 	private void writeInfoFile(int port) throws IOException
 	{
-		Path info = config.getInfoFile();
-		Files.createDirectories(info.getParent());
-		String json = "{\"pid\":" + ProcessHandle.current().pid()
+		long pid = ProcessHandle.current().pid();
+		String json = "{\"pid\":" + pid
 			+ ",\"port\":" + port
 			+ ",\"token\":" + Json.str(token)
 			+ ",\"pluginDir\":" + Json.str(config.getPluginDir().toString()) + "}";
-		Files.write(info, json.getBytes(StandardCharsets.UTF_8));
-		info.toFile().deleteOnExit();
+		byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+
+		// One file per client, so the manager can see every running client at once
+		Path perClient = config.getInfoDir().resolve(pid + ".json");
+		Files.createDirectories(perClient.getParent());
+		Files.write(perClient, bytes);
+		perClient.toFile().deleteOnExit();
+
+		// The single agent.json older tools (tools/rlctl.ps1) read; the last client to start wins
+		Path legacy = config.getInfoFile();
+		Files.createDirectories(legacy.getParent());
+		Files.write(legacy, bytes);
+		legacy.toFile().deleteOnExit();
 	}
 
 	private void handle(Socket socket)

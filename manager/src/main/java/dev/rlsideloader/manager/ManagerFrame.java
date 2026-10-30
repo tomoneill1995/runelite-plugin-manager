@@ -56,6 +56,11 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 	private final Controller controller;
 
 	private final Widgets.StatusLabel agentStatus = new Widgets.StatusLabel();
+	/** Which running client Enable/Disable/Reload apply to; shown once more than one is running */
+	private final JComboBox<String> clientTarget = new JComboBox<>();
+	private final List<Long> targetPids = new ArrayList<>();
+	private boolean updatingTarget;
+	private String lastPidsKey = "";
 	private final JButton launchButton = Widgets.accentButton("Launch RuneLite");
 	private final JTabbedPane tabs = new JTabbedPane();
 
@@ -119,7 +124,19 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		title.setFont(Theme.font(Font.BOLD, 18f));
 		title.setForeground(Theme.TEXT);
 
-		JPanel left = Widgets.row(0, title, (JComponent) Box.createHorizontalStrut(16), agentStatus);
+		clientTarget.setToolTipText("Which running client Enable, Disable and Reload apply to");
+		clientTarget.setVisible(false);
+		clientTarget.addActionListener(e ->
+		{
+			if (!updatingTarget)
+			{
+				int i = clientTarget.getSelectedIndex();
+				controller.setTarget(i > 0 && i < targetPids.size() ? targetPids.get(i) : 0);
+			}
+		});
+
+		JPanel left = Widgets.row(0, title, (JComponent) Box.createHorizontalStrut(16), agentStatus,
+			(JComponent) Box.createHorizontalStrut(12), clientTarget);
 
 		JButton pullAll = Widgets.subtleButton("Pull all");
 		pullAll.setToolTipText("git pull every GitHub source and rebuild what changed");
@@ -257,6 +274,11 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		JCheckBoxMenuItem pull = new JCheckBoxMenuItem("Pull GitHub sources on launch", controller.isPullOnLaunch());
 		pull.addActionListener(e -> controller.setPullOnLaunch(pull.isSelected()));
 		menu.add(pull);
+
+		JMenuItem jvm = new JMenuItem("RuneLite JVM arguments…");
+		jvm.setToolTipText("Extra JVM arguments for the RuneLite client, e.g. -Xmx2g or -javaagent:... Applied from the next launch.");
+		jvm.addActionListener(e -> editJvmArgs());
+		menu.add(jvm);
 		menu.addSeparator();
 
 		JMenuItem data = new JMenuItem("Open data folder");
@@ -275,10 +297,24 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 	public void rowsChanged(boolean structural)
 	{
 		boolean connected = controller.isConnected();
-		agentStatus.set(connected ? "RuneLite running  ·  pid " + controller.agentPid() : "RuneLite not running",
-			connected ? Theme.GREEN : Theme.TEXT_DIM);
-		launchButton.setEnabled(!connected);
-		launchButton.setText(connected ? "RuneLite running" : "Launch RuneLite");
+		List<Long> pids = controller.clientPids();
+		String status;
+		if (!connected)
+		{
+			status = "RuneLite not running";
+		}
+		else if (pids.size() == 1)
+		{
+			status = "RuneLite running  ·  pid " + pids.get(0);
+		}
+		else
+		{
+			status = pids.size() + " clients running  ·  pids "
+				+ pids.stream().map(String::valueOf).collect(Collectors.joining(", "));
+		}
+		agentStatus.set(status, connected ? Theme.GREEN : Theme.TEXT_DIM);
+		launchButton.setText(connected ? "Launch another client" : "Launch RuneLite");
+		refreshClientTarget(pids);
 
 		List<PluginRow> rows = controller.rows();
 		long installed = rows.stream().filter(PluginRow::installed).count();
@@ -302,6 +338,37 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 			installedCards.values().forEach(PluginCard::refresh);
 		}
 		statusBar.setText(controller.lastLog().isEmpty() ? " " : controller.lastLog());
+	}
+
+	/** Rebuilds the header's client selector when the set of running clients changes */
+	private void refreshClientTarget(List<Long> pids)
+	{
+		String key = pids.toString();
+		if (key.equals(lastPidsKey))
+		{
+			return;
+		}
+		lastPidsKey = key;
+		updatingTarget = true;
+		try
+		{
+			targetPids.clear();
+			clientTarget.removeAllItems();
+			targetPids.add(0L);
+			clientTarget.addItem("All clients");
+			for (Long pid : pids)
+			{
+				targetPids.add(pid);
+				clientTarget.addItem("Client " + pid);
+			}
+			int idx = targetPids.indexOf(controller.target());
+			clientTarget.setSelectedIndex(idx < 0 ? 0 : idx);
+			clientTarget.setVisible(pids.size() > 1);
+		}
+		finally
+		{
+			updatingTarget = false;
+		}
 	}
 
 	private void applyBrowseFilter()
@@ -516,6 +583,19 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 			}
 		}
 		controller.setEnabled(row, enabled);
+	}
+
+	private void editJvmArgs()
+	{
+		Object input = JOptionPane.showInputDialog(this,
+			"Extra JVM arguments for the RuneLite client, separated by spaces.\n"
+				+ "Added after the sideloader agent, so these win on conflicts (e.g. -Xmx2g).\n"
+				+ "Leave empty for none. Applies from the next launch.",
+			"RuneLite JVM arguments", JOptionPane.PLAIN_MESSAGE, null, null, controller.jvmArgs());
+		if (input != null)
+		{
+			controller.setJvmArgs(input.toString());
+		}
 	}
 
 	private void addGitSource()

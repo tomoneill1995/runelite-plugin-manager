@@ -67,8 +67,13 @@ final class Controller
 	private final Set<String> iconsRequested = ConcurrentHashMap.newKeySet();
 
 	private volatile List<PluginRow> rows = List.of();
-	private volatile AgentClient agent;
-	private volatile String lastListSignature = "";
+	/** Connected clients by pid; several RuneLite clients can run at once */
+	private final Map<Long, AgentClient> agents = new ConcurrentHashMap<>();
+	/** What each client reports as loaded: pid -> jar id -> jar */
+	private final Map<Long, Map<String, AgentClient.LoadedJar>> loadedByAgent = new ConcurrentHashMap<>();
+	private final Map<Long, String> listSignatures = new ConcurrentHashMap<>();
+	/** pid the UI's actions apply to, or 0 for every connected client */
+	private volatile long target;
 	private volatile String lastLog = "";
 	private Listener listener;
 
@@ -111,13 +116,26 @@ final class Controller
 
 	boolean isConnected()
 	{
-		return agent != null;
+		return !agents.isEmpty();
 	}
 
-	long agentPid()
+	/** pids of the connected clients, ascending */
+	List<Long> clientPids()
 	{
-		AgentClient a = agent;
-		return a == null ? -1 : a.pid();
+		return agents.keySet().stream().sorted().collect(Collectors.toList());
+	}
+
+	/** pid the UI's actions apply to, or 0 for every connected client */
+	long target()
+	{
+		return target;
+	}
+
+	void setTarget(long pid)
+	{
+		target = pid != 0 && agents.containsKey(pid) ? pid : 0;
+		recomputeLoaded();
+		changed(false);
 	}
 
 	String lastLog()
@@ -133,6 +151,12 @@ final class Controller
 	boolean isPullOnLaunch()
 	{
 		return config.pullOnLaunch;
+	}
+
+	/** Extra JVM arguments for the RuneLite client, whitespace separated; empty for none */
+	String jvmArgs()
+	{
+		return config.jvmArgs == null ? "" : config.jvmArgs.trim();
 	}
 
 	/** Installed rows that need this one, directly or not */
@@ -156,11 +180,7 @@ final class Controller
 
 	void launch()
 	{
-		if (agent != null)
-		{
-			log("RuneLite is already running with the agent");
-			return;
-		}
+		boolean another = isConnected();
 		worker.execute(() ->
 		{
 			if (config.pullOnLaunch)
@@ -169,8 +189,10 @@ final class Controller
 			}
 			try
 			{
-				RuneLiteLauncher.launch(config.disableTelemetry);
-				log("Starting RuneLite" + (config.disableTelemetry ? " (telemetry off)" : "")
+				RuneLiteLauncher.launch(config.disableTelemetry, config.jvmArgs);
+				String extra = jvmArgs().isEmpty() ? "" : " with JVM args: " + jvmArgs();
+				log((another ? "Starting another RuneLite client" : "Starting RuneLite")
+					+ (config.disableTelemetry ? " (telemetry off)" : "") + extra
 					+ "; plugins load once it reaches the login screen");
 			}
 			catch (IOException e)
@@ -196,7 +218,7 @@ final class Controller
 			r.settings().enabled = true;
 		}
 		save();
-		if (agent != null)
+		if (isConnected())
 		{
 			runFor(row, "Install", () -> loadRow(row, false));
 		}
@@ -221,9 +243,9 @@ final class Controller
 		row.settings().autoReload = false;
 		watcher.unwatch(row);
 		save();
-		if (agent != null && row.loaded != null)
+		if (isConnected())
 		{
-			runFor(row, "Uninstall", () -> unloadRow(row)); // the agent unloads dependents first
+			runFor(row, "Uninstall", () -> unloadRow(row, allAgents())); // the agent unloads dependents first
 		}
 		log("Uninstalled " + row.displayName()
 			+ (dependents.isEmpty() ? "" : " and " + dependents.stream().map(PluginRow::displayName).collect(Collectors.joining(", "))));
@@ -250,7 +272,7 @@ final class Controller
 			r.settings().installed |= enabled;
 		}
 		save();
-		if (agent != null)
+		if (isConnected())
 		{
 			runFor(row, enabled ? "Load" : "Unload", () ->
 			{
@@ -307,6 +329,16 @@ final class Controller
 	{
 		config.pullOnLaunch = pull;
 		save();
+	}
+
+	void setJvmArgs(String args)
+	{
+		String trimmed = args == null ? "" : args.trim();
+		config.jvmArgs = trimmed;
+		save();
+		log(trimmed.isEmpty()
+			? "RuneLite JVM arguments cleared; applies from the next launch"
+			: "RuneLite JVM arguments set to \"" + trimmed + "\"; applies from the next launch");
 	}
 
 	/**
@@ -521,11 +553,11 @@ final class Controller
 		save();
 		poller.shutdownNow();
 		worker.shutdownNow();
-		AgentClient a = agent;
-		if (a != null)
+		for (AgentClient a : allAgents())
 		{
 			a.close();
 		}
+		agents.clear();
 		try
 		{
 			watcher.close();
@@ -542,81 +574,138 @@ final class Controller
 		try
 		{
 			refreshRows(); // picks up jars added to folder sources
-
-			AgentClient a = agent;
-			if (a == null)
-			{
-				a = AgentClient.tryConnect();
-				if (a == null)
-				{
-					return;
-				}
-				agent = a;
-				log("Connected to RuneLite (pid " + a.pid() + ")");
-				for (PluginRow row : rows)
-				{
-					row.error = null;
-				}
-				changed(false);
-				worker.execute(this::syncAll);
-			}
-			applyList(a.list());
 		}
-		catch (IOException e)
-		{
-			disconnect();
-		}
-		catch (Exception e)
+		catch (RuntimeException e)
 		{
 			log("Status refresh failed: " + e.getMessage());
 		}
+
+		// Connect to any client that has started since last time
+		for (AgentClient.Info info : AgentClient.discover())
+		{
+			if (agents.containsKey(info.pid()))
+			{
+				continue;
+			}
+			AgentClient a = AgentClient.connect(info);
+			if (a == null)
+			{
+				continue;
+			}
+			agents.put(a.pid(), a);
+			log("Connected to RuneLite (pid " + a.pid() + ")"
+				+ (agents.size() > 1 ? "; " + agents.size() + " clients running" : ""));
+			for (PluginRow row : rows)
+			{
+				row.error = null;
+			}
+			changed(false);
+			worker.execute(() -> syncAgent(a));
+		}
+
+		// Refresh each client; drop the ones that have gone away
+		for (AgentClient a : allAgents())
+		{
+			try
+			{
+				applyList(a, a.list());
+			}
+			catch (IOException e)
+			{
+				drop(a);
+			}
+			catch (Exception e)
+			{
+				log("Status refresh failed (pid " + a.pid() + "): " + e.getMessage());
+			}
+		}
 	}
 
-	private void disconnect()
+	private void drop(AgentClient a)
 	{
-		AgentClient a = agent;
-		if (a == null)
+		if (agents.remove(a.pid()) == null)
 		{
 			return;
 		}
 		a.close();
-		agent = null;
-		lastListSignature = "";
-		for (PluginRow row : rows)
+		loadedByAgent.remove(a.pid());
+		listSignatures.remove(a.pid());
+		if (target == a.pid())
 		{
-			row.loaded = null;
+			target = 0;
 		}
-		log("RuneLite closed");
+		recomputeLoaded();
+		log("RuneLite closed (pid " + a.pid() + ")"
+			+ (agents.isEmpty() ? "" : "; " + agents.size() + " still running"));
 		changed(false);
 	}
 
-	/** After connecting: load enabled rows (dependencies first), unload disabled ones */
-	private void syncAll()
+	/** Every connected client, pid order */
+	private List<AgentClient> allAgents()
 	{
-		AgentClient a = agent;
-		if (a == null)
+		return agents.entrySet().stream()
+			.sorted(Map.Entry.comparingByKey())
+			.map(Map.Entry::getValue)
+			.collect(Collectors.toList());
+	}
+
+	/** The clients the UI's actions apply to: the selected one, or all of them */
+	private List<AgentClient> targets()
+	{
+		AgentClient one = target == 0 ? null : agents.get(target);
+		return one != null ? List.of(one) : allAgents();
+	}
+
+	private boolean loadedOn(AgentClient a, PluginRow row)
+	{
+		Map<String, AgentClient.LoadedJar> byId = loadedByAgent.get(a.pid());
+		return byId != null && byId.containsKey(row.id());
+	}
+
+	/** Loaded on every one of these clients (an empty list counts as not loaded) */
+	private boolean loadedOnAll(PluginRow row, List<AgentClient> on)
+	{
+		if (on.isEmpty())
 		{
-			return;
+			return false;
 		}
+		for (AgentClient a : on)
+		{
+			if (!loadedOn(a, row))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** After a client connects: load enabled rows (dependencies first) and unload disabled ones, on that client */
+	private void syncAgent(AgentClient a)
+	{
 		try
 		{
-			applyList(a.list());
+			applyList(a, a.list());
 		}
 		catch (Exception e)
 		{
-			log("Sync failed: " + e.getMessage());
+			log("Sync failed (pid " + a.pid() + "): " + e.getMessage());
 			return;
 		}
 
+		List<AgentClient> on = List.of(a);
 		for (PluginRow row : rows)
 		{
-			if (row.enabled() && row.loaded == null && row.error == null)
+			if (!agents.containsKey(a.pid()))
 			{
-				runNow(row, "Load", () -> loadRow(row, false));
+				return; // it closed while we were syncing
 			}
-			else if (!row.enabled() && row.loaded != null)
+			if (row.enabled() && !loadedOn(a, row) && row.error == null)
 			{
-				runNow(row, "Unload", () -> unloadRow(row));
+				runNow(row, "Load", () -> loadRow(row, false, new HashSet<>(), on));
+			}
+			else if (!row.enabled() && loadedOn(a, row))
+			{
+				runNow(row, "Unload", () -> unloadRow(row, on));
 			}
 		}
 	}
@@ -635,7 +724,7 @@ final class Controller
 
 	private void loadRow(PluginRow row, boolean rebuild) throws Exception
 	{
-		loadRow(row, rebuild, new HashSet<>());
+		loadRow(row, rebuild, new HashSet<>(), targets());
 	}
 
 	/**
@@ -643,7 +732,7 @@ final class Controller
 	 * loads it. The agent replaces an already-loaded jar with the same id (and reloads what
 	 * depends on it), so this doubles as reload.
 	 */
-	private void loadRow(PluginRow row, boolean rebuild, Set<PluginRow> visiting) throws Exception
+	private void loadRow(PluginRow row, boolean rebuild, Set<PluginRow> visiting, List<AgentClient> on) throws Exception
 	{
 		if (!visiting.add(row))
 		{
@@ -659,11 +748,11 @@ final class Controller
 				save();
 				changed(true);
 			}
-			if (dep.loaded == null)
+			if (!loadedOnAll(dep, on))
 			{
 				try
 				{
-					loadRow(dep, false, visiting);
+					loadRow(dep, false, visiting, on);
 				}
 				catch (Exception e)
 				{
@@ -707,13 +796,18 @@ final class Controller
 		Path staged = Paths.STAGING.resolve(row.id() + ".jar");
 		Files.copy(jar, staged, StandardCopyOption.REPLACE_EXISTING);
 
-		AgentClient a = agent;
-		if (a != null && row.enabled())
+		if (row.enabled() && !on.isEmpty())
 		{
-			a.load(staged, row.deps.stream().map(PluginRow::id).collect(Collectors.toList()));
+			List<String> depIds = row.deps.stream().map(PluginRow::id).collect(Collectors.toList());
+			for (AgentClient a : on)
+			{
+				a.load(staged, depIds);
+				applyList(a, a.list());
+			}
 			row.error = null;
-			applyList(a.list());
-			log("Loaded " + row.displayName() + (row.pluginNames().isEmpty() ? "" : " (" + row.pluginNames() + ")"));
+			String where = on.size() > 1 ? " on " + on.size() + " clients"
+				: agents.size() > 1 ? " on pid " + on.get(0).pid() : "";
+			log("Loaded " + row.displayName() + (row.pluginNames().isEmpty() ? "" : " (" + row.pluginNames() + ")") + where);
 		}
 	}
 
@@ -740,17 +834,28 @@ final class Controller
 
 	private void unloadRow(PluginRow row) throws Exception
 	{
-		AgentClient a = agent;
-		if (a == null || row.loaded == null)
-		{
-			return;
-		}
-		a.unload(row.id());
-		applyList(a.list());
-		log("Unloaded " + row.displayName());
+		unloadRow(row, targets());
 	}
 
-	private void applyList(List<AgentClient.LoadedJar> jars)
+	private void unloadRow(PluginRow row, List<AgentClient> on) throws Exception
+	{
+		boolean any = false;
+		for (AgentClient a : on)
+		{
+			if (loadedOn(a, row))
+			{
+				a.unload(row.id());
+				applyList(a, a.list());
+				any = true;
+			}
+		}
+		if (any)
+		{
+			log("Unloaded " + row.displayName() + (on.size() > 1 ? " on " + on.size() + " clients" : ""));
+		}
+	}
+
+	private void applyList(AgentClient a, List<AgentClient.LoadedJar> jars)
 	{
 		Map<String, AgentClient.LoadedJar> byId = new HashMap<>();
 		StringBuilder signature = new StringBuilder();
@@ -764,16 +869,34 @@ final class Controller
 			}
 			signature.append(';');
 		}
+		loadedByAgent.put(a.pid(), Map.copyOf(byId));
+		recomputeLoaded();
+		// polling happens every 2s; only repaint when something changed
+		String previous = listSignatures.put(a.pid(), signature.toString());
+		if (!signature.toString().equals(previous))
+		{
+			changed(false);
+		}
+	}
+
+	/**
+	 * Sets each row's loaded state as seen from the current target: the selected client, or
+	 * (for "all clients") loaded on every connected client, so a row that's only on some of
+	 * them shows as not loaded and Enable re-sends it everywhere.
+	 */
+	private void recomputeLoaded()
+	{
+		List<AgentClient> view = targets();
 		for (PluginRow row : rows)
 		{
-			AgentClient.LoadedJar jar = byId.get(row.id());
-			row.loaded = jar == null ? null : jar.plugins();
-		}
-		// polling happens every 2s; only repaint when something changed
-		if (!signature.toString().equals(lastListSignature))
-		{
-			lastListSignature = signature.toString();
-			changed(false);
+			List<AgentClient.LoadedPlugin> plugins = null;
+			if (loadedOnAll(row, view))
+			{
+				Map<String, AgentClient.LoadedJar> byId = loadedByAgent.get(view.get(0).pid());
+				AgentClient.LoadedJar jar = byId == null ? null : byId.get(row.id());
+				plugins = jar == null ? null : jar.plugins();
+			}
+			row.loaded = plugins;
 		}
 	}
 
@@ -853,9 +976,9 @@ final class Controller
 			for (PluginRow row : gone)
 			{
 				watcher.unwatch(row);
-				if (row.loaded != null)
+				if (isConnected())
 				{
-					runFor(row, "Unload", () -> unloadRow(row));
+					runFor(row, "Unload", () -> unloadRow(row, allAgents()));
 				}
 			}
 			for (PluginRow row : created)
@@ -874,7 +997,7 @@ final class Controller
 			}
 			rows = List.copyOf(next);
 
-			if (agent != null)
+			if (isConnected())
 			{
 				for (PluginRow row : created)
 				{
@@ -1029,7 +1152,7 @@ final class Controller
 			for (PluginRow row : rows)
 			{
 				if (row.kind() == PluginRow.Kind.HUB && updated.contains(row.path().getFileName().toString())
-					&& agent != null && row.enabled())
+					&& isConnected() && row.enabled())
 				{
 					runNow(row, "Update", () -> loadRow(row, true));
 				}
@@ -1064,7 +1187,7 @@ final class Controller
 			if (row.source() == source)
 			{
 				row.needsBuild = true;
-				if (agent != null && row.enabled())
+				if (isConnected() && row.enabled())
 				{
 					runNow(row, "Rebuild", () -> loadRow(row, true));
 				}

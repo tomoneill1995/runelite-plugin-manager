@@ -63,6 +63,8 @@ final class ManagerConfig
 	boolean disableTelemetry = true;
 	/** Pull git sources (and rebuild what changed) before launching RuneLite */
 	boolean pullOnLaunch = true;
+	/** Extra JVM arguments for the RuneLite client, whitespace separated; added to RUNELITE_VMARGS after the agent */
+	String jvmArgs = "";
 	List<Source> sources = new ArrayList<>();
 	/** Keyed by the row's path (repo folder or jar file) */
 	Map<String, RowSettings> rows = new LinkedHashMap<>();

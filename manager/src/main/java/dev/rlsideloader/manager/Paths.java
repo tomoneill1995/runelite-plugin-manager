@@ -15,6 +15,8 @@ final class Paths
 	static final Path LOG = HOME.resolve("manager.log");
 	static final Path STAGING = HOME.resolve("staging");
 	static final Path AGENT_DIR = HOME.resolve("agent");
+	/** Jars shipped next to the app (e.g. another -javaagent) are copied here; "${extra}" in JVM args */
+	static final Path EXTRA = HOME.resolve("extra");
 	static final Path DEFAULT_PLUGINS = HOME.resolve("plugins");
 	static final Path GIT_REPOS = HOME.resolve("repos");
 

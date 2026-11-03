@@ -51,6 +51,7 @@ final class Controller
 	}
 
 	private static final int SCAN_DEPTH = 3;
+	private static final long PRIVATE_HUB_REFRESH_MINUTES = 30;
 	private static final Set<String> SCAN_SKIP = Set.of("build", "node_modules", "out", "bin", "target", "src", "gradle");
 
 	private final ManagerConfig config;
@@ -100,15 +101,23 @@ final class Controller
 			rescanAll();
 			refreshRows();
 			poller.scheduleWithFixedDelay(this::poll, 0, 2, TimeUnit.SECONDS);
-			// Private hubs publish new builds on their own; pick them up each time the manager opens
-			for (ManagerConfig.Source s : sources())
-			{
-				if (s.type == ManagerConfig.SourceType.PRIVATE_HUB)
-				{
-					pullNow(s);
-				}
-			}
+			// Private hubs publish new builds on their own: pick them up when the manager opens
+			// and every half hour while it stays open (updates reload into a running client)
+			refreshPrivateHubs();
+			poller.scheduleWithFixedDelay(() -> worker.execute(this::refreshPrivateHubs),
+				PRIVATE_HUB_REFRESH_MINUTES, PRIVATE_HUB_REFRESH_MINUTES, TimeUnit.MINUTES);
 		});
+	}
+
+	private void refreshPrivateHubs()
+	{
+		for (ManagerConfig.Source s : sources())
+		{
+			if (s.type == ManagerConfig.SourceType.PRIVATE_HUB)
+			{
+				pullNow(s);
+			}
+		}
 	}
 
 	// ---- queries, for the UI ----
@@ -170,10 +179,14 @@ final class Controller
 		return config.pullOnLaunch;
 	}
 
-	/** Extra JVM arguments for the RuneLite client, whitespace separated; empty for none */
+	/**
+	 * Extra JVM arguments for the RuneLite client, whitespace separated; empty for none.
+	 * "${extra}" stands for the folder jars shipped with the app are copied to.
+	 */
 	String jvmArgs()
 	{
-		return config.jvmArgs == null ? "" : config.jvmArgs.trim();
+		String args = config.jvmArgs == null ? "" : config.jvmArgs.trim();
+		return args.replace("${extra}", Paths.EXTRA.toString());
 	}
 
 	boolean isJagexLauncherMode()
@@ -211,7 +224,7 @@ final class Controller
 			}
 			try
 			{
-				RuneLiteLauncher.launch(config.disableTelemetry, config.jvmArgs);
+				RuneLiteLauncher.launch(config.disableTelemetry, jvmArgs());
 				String extra = jvmArgs().isEmpty() ? "" : " with JVM args: " + jvmArgs();
 				log((another ? "Starting another RuneLite client" : "Starting RuneLite")
 					+ (config.disableTelemetry ? " (telemetry off)" : "") + extra

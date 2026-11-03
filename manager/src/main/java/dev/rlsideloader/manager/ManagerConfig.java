@@ -145,6 +145,7 @@ final class ManagerConfig
 							s.path = PrivateHub.dirFor(s.url).toString();
 						}
 					}
+					copyExtraJars(dir.resolve("extra"));
 					System.err.println("Using first-run settings from " + file);
 					return config;
 				}
@@ -155,6 +156,30 @@ final class ManagerConfig
 			}
 		}
 		return new ManagerConfig();
+	}
+
+	/**
+	 * Jars shipped in an "extra" folder next to the app (another -javaagent, say) are copied to
+	 * ~/.rl-sideloader/extra, a path without spaces that "${extra}" in the JVM arguments points at.
+	 */
+	private static void copyExtraJars(Path from)
+	{
+		if (!Files.isDirectory(from))
+		{
+			return;
+		}
+		try (var jars = Files.list(from))
+		{
+			Files.createDirectories(Paths.EXTRA);
+			for (Path jar : jars.filter(p -> p.toString().endsWith(".jar")).collect(java.util.stream.Collectors.toList()))
+			{
+				Files.copy(jar, Paths.EXTRA.resolve(jar.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+			}
+		}
+		catch (IOException e)
+		{
+			System.err.println("Unable to copy extra jars from " + from + ": " + e);
+		}
 	}
 
 	/** Where the app lives: the packaged exe's folder, else the working directory */

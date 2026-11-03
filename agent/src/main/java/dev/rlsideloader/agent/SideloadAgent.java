@@ -5,6 +5,7 @@ import java.lang.instrument.Instrumentation;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.client.RuneLite;
@@ -23,6 +24,7 @@ public final class SideloadAgent
 	private static final Set<GameState> NOT_READY = EnumSet.of(GameState.UNKNOWN, GameState.STARTING);
 	private static final long POLL_MS = 500;
 	private static final long STARTUP_GRACE_MS = 2000;
+	private static final AtomicBoolean STARTED = new AtomicBoolean();
 
 	private SideloadAgent()
 	{
@@ -30,6 +32,12 @@ public final class SideloadAgent
 
 	public static void premain(String args, Instrumentation inst)
 	{
+		// The same agent can reach the JVM twice: from RuneLite's launcher settings (Jagex
+		// Launcher mode) and from RUNELITE_VMARGS when the manager launches the client itself
+		if (!STARTED.compareAndSet(false, true))
+		{
+			return;
+		}
 		AgentConfig config = AgentConfig.parse(args);
 		Thread thread = new Thread(() -> run(config, inst), "rl-sideloader");
 		thread.setDaemon(true);

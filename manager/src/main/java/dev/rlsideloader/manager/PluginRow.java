@@ -16,6 +16,14 @@ final class PluginRow
 		JAR,
 		/** From the official Plugin Hub: prebuilt jar, nothing to build or watch */
 		HUB,
+		/** From a private hub: prebuilt jar, nothing to build or watch */
+		PRIVATE,
+	}
+
+	/** Prebuilt by a hub: no folder, no build, no file watching */
+	boolean prebuilt()
+	{
+		return kind == Kind.HUB || kind == Kind.PRIVATE;
 	}
 
 	private final Kind kind;

@@ -43,6 +43,30 @@ header with its own entry in the Clients selector.
 Only the entries the manager adds are touched; the rest of that file is left alone, and turning the mode
 off removes them again. Your RuneLite install isn't modified.
 
+## Private hubs
+
+A private hub is a `manifest.json` on the web with prebuilt plugin jars next to it, the same idea
+as the Plugin Hub but run by whoever you like. **Sources → + Private hub** takes the manifest URL;
+its plugins appear in Browse, download prebuilt (checked against the manifest's SHA-256) and update
+on their own: the manager re-reads the manifest every time it opens and when you press Refresh. A hub
+can ask for its plugins to be installed as soon as it's added, so a friend has nothing to click.
+
+To give someone a ready-made setup, put a `manager-defaults.json` next to `RuneLite Plugin Manager.exe`
+in the zip you send them. It's a `manager.json` (the same format as `~/.rl-sideloader/manager.json`)
+used the first time the manager runs, for example:
+
+```json
+{
+  "jagexLauncherMode": true,
+  "sources": [
+    { "type": "PRIVATE_HUB", "url": "https://example.com/hub/manifest.json" }
+  ]
+}
+```
+
+The [rl-hub](https://github.com/tomoneill1995/rl-hub) repo builds a hub from a list of GitHub repos
+with GitHub Actions; a web server that pulls it serves the result.
+
 If a plugin depends on another one (a `project(':Other')` dependency in Gradle, or
 `@PluginDependency`), the dependency gets installed and loaded first. Reloading a dependency also
 reloads the plugins that use it.

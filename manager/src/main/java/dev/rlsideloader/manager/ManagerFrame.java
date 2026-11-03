@@ -225,6 +225,9 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		scan.addActionListener(e -> chooseFolder("Folder to scan for plugin projects").ifPresent(controller::scanForProjects));
 		addHub.setToolTipText("Browse and install from the official RuneLite Plugin Hub");
 		addHub.addActionListener(e -> controller.addHubSource());
+		JButton addPrivate = Widgets.subtleButton("+ Private hub");
+		addPrivate.setToolTipText("Prebuilt plugins from a manifest URL someone gave you");
+		addPrivate.addActionListener(e -> addPrivateHubSource());
 		JButton rescan = Widgets.textButton("Rescan");
 		rescan.setToolTipText("Re-read every source from disk");
 		rescan.addActionListener(e -> controller.rescanSources());
@@ -232,7 +235,7 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		JPanel bar = new JPanel(new BorderLayout());
 		bar.setBackground(Theme.BACKGROUND);
 		bar.setBorder(BorderFactory.createEmptyBorder(12, 16, 0, 16));
-		bar.add(Widgets.row(8, addGit, addHub, addLocal, addFolder, scan), BorderLayout.WEST);
+		bar.add(Widgets.row(8, addGit, addHub, addPrivate, addLocal, addFolder, scan), BorderLayout.WEST);
 		bar.add(rescan, BorderLayout.EAST);
 
 		JPanel panel = new JPanel(new BorderLayout());
@@ -513,6 +516,9 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 			case HUB:
 				kind = "Official";
 				break;
+			case PRIVATE_HUB:
+				kind = "Private hub";
+				break;
 			case GIT:
 				kind = "GitHub";
 				break;
@@ -528,7 +534,9 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		JLabel title = new JLabel(Sources.label(source));
 		title.setFont(Theme.font(Font.BOLD, 14f));
 		long count = controller.pluginCount(source);
-		String where = source.type == ManagerConfig.SourceType.HUB ? "prebuilt jars from repo.runelite.net, hash-checked" : source.path;
+		String where = source.type == ManagerConfig.SourceType.HUB ? "prebuilt jars from repo.runelite.net, hash-checked"
+			: source.type == ManagerConfig.SourceType.PRIVATE_HUB ? "prebuilt jars from " + source.url + ", hash-checked"
+			: source.path;
 		JLabel subtitle = new JLabel(kind + "  ·  " + count + (count == 1 ? " plugin" : " plugins") + "  ·  " + where);
 		subtitle.setFont(Theme.font(Font.PLAIN, 11.5f));
 		subtitle.setForeground(Theme.TEXT_DIM);
@@ -539,13 +547,14 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		card.add(text, BorderLayout.CENTER);
 
 		JPanel buttons = Widgets.row(6);
-		if (source.type == ManagerConfig.SourceType.GIT || source.type == ManagerConfig.SourceType.HUB)
+		boolean anyHub = source.type == ManagerConfig.SourceType.HUB || source.type == ManagerConfig.SourceType.PRIVATE_HUB;
+		if (source.type == ManagerConfig.SourceType.GIT || anyHub)
 		{
-			JButton pull = Widgets.subtleButton(source.type == ManagerConfig.SourceType.HUB ? "Refresh" : "Pull");
+			JButton pull = Widgets.subtleButton(anyHub ? "Refresh" : "Pull");
 			pull.addActionListener(e -> controller.pull(source));
 			buttons.add(pull);
 		}
-		if (source.type != ManagerConfig.SourceType.HUB)
+		if (!anyHub)
 		{
 			JButton open = Widgets.subtleButton("Open");
 			open.addActionListener(e -> openFolder(Path.of(source.path)));
@@ -628,6 +637,21 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		{
 			controller.addGitSource(input);
 			search.setText(""); // so the new plugins aren't hidden by an old search
+			sourceFilter.setSelectedItem(ALL_SOURCES);
+			tabs.setSelectedIndex(TAB_BROWSE);
+		}
+	}
+
+	private void addPrivateHubSource()
+	{
+		String input = (String) JOptionPane.showInputDialog(this,
+			"The hub's manifest URL (https://…/manifest.json), as given to you by whoever runs it.\n"
+				+ "Its plugins come prebuilt and show up in Browse; they update on their own.",
+			"Add private hub", JOptionPane.PLAIN_MESSAGE, null, null, "");
+		if (input != null && !input.isBlank())
+		{
+			controller.addPrivateHubSource(input);
+			search.setText("");
 			sourceFilter.setSelectedItem(ALL_SOURCES);
 			tabs.setSelectedIndex(TAB_BROWSE);
 		}

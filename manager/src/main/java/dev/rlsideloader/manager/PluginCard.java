@@ -244,7 +244,7 @@ final class PluginCard extends Widgets.Card
 		reload.addActionListener(e -> frame.controller().reload(row));
 		menu.add(reload);
 
-		if (!hub)
+		if (!row.prebuilt())
 		{
 			JCheckBoxMenuItem auto = new JCheckBoxMenuItem("Auto-reload when files change", row.settings().autoReload);
 			auto.addActionListener(e -> frame.controller().setAutoReload(row, auto.isSelected()));
@@ -260,7 +260,7 @@ final class PluginCard extends Widgets.Card
 			menu.addSeparator();
 		}
 
-		String web = Sources.webUrl(row.source(), row.path());
+		String web = frame.controller().webUrl(row);
 		if (web != null)
 		{
 			JMenuItem github = new JMenuItem(hub ? "View on Plugin Hub" : "View on GitHub");

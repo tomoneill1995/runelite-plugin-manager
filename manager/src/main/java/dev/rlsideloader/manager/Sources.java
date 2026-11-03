@@ -15,6 +15,22 @@ final class Sources
 		{
 			return "RuneLite Plugin Hub";
 		}
+		if (source.type == ManagerConfig.SourceType.PRIVATE_HUB)
+		{
+			if (source.name != null && !source.name.isBlank())
+			{
+				return source.name;
+			}
+			try
+			{
+				String host = source.url == null ? null : java.net.URI.create(source.url).getHost();
+				return host != null ? host : "Private hub";
+			}
+			catch (RuntimeException e)
+			{
+				return "Private hub";
+			}
+		}
 		if (source.type == ManagerConfig.SourceType.GIT && source.url != null)
 		{
 			String s = source.url.replaceAll("\\.git$", "").replaceAll("/+$", "");

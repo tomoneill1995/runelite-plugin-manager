@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -31,14 +32,18 @@ final class ManagerConfig
 		GIT,
 		/** The official RuneLite Plugin Hub (prebuilt, hash-checked jars) */
 		HUB,
+		/** A private hub: a manifest.json URL with prebuilt jars next to it; path is its cache folder */
+		PRIVATE_HUB,
 	}
 
 	static final class Source
 	{
 		SourceType type;
 		String path;
-		/** GIT only: the remote it was cloned from */
+		/** GIT: the remote it was cloned from. PRIVATE_HUB: the manifest URL */
 		String url;
+		/** PRIVATE_HUB: the hub's name from its manifest, remembered for offline display */
+		String name;
 
 		Source(SourceType type, String path)
 		{
@@ -101,10 +106,69 @@ final class ManagerConfig
 			System.err.println("Unable to read " + Paths.CONFIG + ": " + e);
 		}
 
-		ManagerConfig config = new ManagerConfig();
-		config.sources.add(new Source(SourceType.HUB, PluginHub.DIR.toString()));
-		config.sources.add(new Source(SourceType.FOLDER, Paths.DEFAULT_PLUGINS.toString()));
+		ManagerConfig config = defaults();
+		if (config.sources.stream().noneMatch(s -> s.type == SourceType.HUB))
+		{
+			config.sources.add(0, new Source(SourceType.HUB, PluginHub.DIR.toString()));
+		}
+		if (config.sources.stream().noneMatch(s -> s.type == SourceType.FOLDER))
+		{
+			config.sources.add(new Source(SourceType.FOLDER, Paths.DEFAULT_PLUGINS.toString()));
+		}
 		return config;
+	}
+
+	/**
+	 * First-run settings: manager-defaults.json next to the app, if someone shipped one (e.g. a
+	 * zip pre-pointed at a private hub, so the person installing it has nothing to set up).
+	 */
+	private static ManagerConfig defaults()
+	{
+		for (Path dir : appDirs())
+		{
+			Path file = dir.resolve("manager-defaults.json");
+			if (!Files.isRegularFile(file))
+			{
+				continue;
+			}
+			try
+			{
+				ManagerConfig config = GSON.fromJson(Files.readString(file), ManagerConfig.class);
+				if (config != null)
+				{
+					config.sources.removeIf(s -> s.type == null || (s.path == null && s.url == null));
+					for (Source s : config.sources)
+					{
+						if (s.type == SourceType.PRIVATE_HUB && s.url != null)
+						{
+							s.url = PrivateHub.normalizeUrl(s.url);
+							s.path = PrivateHub.dirFor(s.url).toString();
+						}
+					}
+					System.err.println("Using first-run settings from " + file);
+					return config;
+				}
+			}
+			catch (IOException | RuntimeException e)
+			{
+				System.err.println("Unable to read " + file + ": " + e);
+			}
+		}
+		return new ManagerConfig();
+	}
+
+	/** Where the app lives: the packaged exe's folder, else the working directory */
+	private static List<Path> appDirs()
+	{
+		List<Path> dirs = new ArrayList<>();
+		String packaged = System.getProperty("jpackage.app-path");
+		if (packaged != null && Path.of(packaged).getParent() != null)
+		{
+			dirs.add(Path.of(packaged).getParent());
+		}
+		ProcessHandle.current().info().command().map(Path::of).map(Path::getParent).ifPresent(dirs::add);
+		dirs.add(Path.of(System.getProperty("user.dir")));
+		return dirs;
 	}
 
 	synchronized void save() throws IOException

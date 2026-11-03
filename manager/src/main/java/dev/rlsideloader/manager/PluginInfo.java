@@ -50,6 +50,14 @@ final class PluginInfo
 		this.warning = warning;
 	}
 
+	static PluginInfo fromPrivate(PrivateHub hub, PrivateHub.Entry e)
+	{
+		return new PluginInfo(hub.entryDir(e), e.name,
+			e.description == null ? "" : e.description, e.author == null ? "" : e.author,
+			e.tags, e.pluginNames, e.pluginClasses, List.of(), e.pluginDependencies,
+			hub.iconFile(e), false, e.version, null);
+	}
+
 	static PluginInfo fromHub(PluginHub.Entry e)
 	{
 		return new PluginInfo(PluginHub.DIR.resolve(e.internalName), e.displayName,

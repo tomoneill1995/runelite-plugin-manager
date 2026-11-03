@@ -64,6 +64,9 @@ final class Controller
 	private final JdkProvider jdks = new JdkProvider();
 	/** Plugin Hub entries as PluginInfo, rebuilt when the manifest loads */
 	private volatile List<PluginInfo> hubInfos = List.of();
+	/** Private hubs by source path, and their entries as PluginInfo */
+	private final Map<String, PrivateHub> privateHubs = new ConcurrentHashMap<>();
+	private final Map<String, List<PluginInfo>> privateInfos = new ConcurrentHashMap<>();
 	private final ExecutorService iconLoader = Executors.newFixedThreadPool(3, r -> daemon(r, "icons"));
 	private final Set<String> iconsRequested = ConcurrentHashMap.newKeySet();
 
@@ -97,6 +100,14 @@ final class Controller
 			rescanAll();
 			refreshRows();
 			poller.scheduleWithFixedDelay(this::poll, 0, 2, TimeUnit.SECONDS);
+			// Private hubs publish new builds on their own; pick them up each time the manager opens
+			for (ManagerConfig.Source s : sources())
+			{
+				if (s.type == ManagerConfig.SourceType.PRIVATE_HUB)
+				{
+					pullNow(s);
+				}
+			}
 		});
 	}
 
@@ -506,6 +517,8 @@ final class Controller
 				config.sources.remove(source);
 			}
 			projects.remove(source.path);
+			privateHubs.remove(source.path);
+			privateInfos.remove(source.path);
 			save();
 			refreshRows();
 			log("Removed source " + Sources.label(source) + " (files left on disk)");
@@ -563,25 +576,138 @@ final class Controller
 		});
 	}
 
-	/** Fetch a Plugin Hub icon in the background, if it isn't cached yet */
+	/**
+	 * Adds a private hub by its manifest URL (or the folder the manifest is in), loads it, and
+	 * installs its plugins if the hub asks for that.
+	 */
+	void addPrivateHubSource(String input)
+	{
+		worker.execute(() ->
+		{
+			String url = PrivateHub.normalizeUrl(input);
+			Path dir = PrivateHub.dirFor(url);
+			ManagerConfig.Source source = addSourceIfNew(ManagerConfig.SourceType.PRIVATE_HUB, dir);
+			if (source == null)
+			{
+				log("That hub is already a source");
+				return;
+			}
+			source.url = url;
+			save();
+			List<String> updated = loadPrivateHub(source, true);
+			if (updated == null)
+			{
+				synchronized (config)
+				{
+					config.sources.remove(source);
+				}
+				privateHubs.remove(source.path);
+				save();
+				return;
+			}
+			refreshRows();
+			changed(true);
+		});
+	}
+
+	private PrivateHub hubFor(ManagerConfig.Source source)
+	{
+		return privateHubs.computeIfAbsent(source.path, p -> new PrivateHub(source.url, Path.of(p)));
+	}
+
+	/**
+	 * Loads a private hub's manifest (downloading it when online or not cached). Returns the
+	 * ids of plugins whose jar changed, or null if the hub couldn't be read at all.
+	 */
+	private List<String> loadPrivateHub(ManagerConfig.Source source, boolean online)
+	{
+		PrivateHub h = hubFor(source);
+		try
+		{
+			List<String> updated = h.load(online);
+			List<PluginInfo> infos = h.entries().values().stream()
+				.map(e -> PluginInfo.fromPrivate(h, e))
+				.collect(Collectors.toList());
+			privateInfos.put(source.path, infos);
+			boolean saveNeeded = false;
+			if (!h.name().equals(source.name))
+			{
+				source.name = h.name();
+				saveNeeded = true;
+			}
+			if (h.installByDefault())
+			{
+				// Plugins this manager has never seen are installed and turned on, once; what
+				// the user disables or uninstalls afterwards stays that way
+				synchronized (config)
+				{
+					for (PluginInfo info : infos)
+					{
+						String key = info.dir.toString();
+						if (!config.rows.containsKey(key))
+						{
+							ManagerConfig.RowSettings s = config.settingsFor(key);
+							s.installed = true;
+							s.enabled = true;
+							saveNeeded = true;
+							log("Installed " + info.title + " from " + h.name());
+						}
+					}
+				}
+			}
+			if (saveNeeded)
+			{
+				save();
+			}
+			if (online)
+			{
+				log(h.name() + ": " + infos.size() + " plugin" + (infos.size() == 1 ? "" : "s")
+					+ (updated.isEmpty() ? "" : ", " + updated.size() + " updated"));
+			}
+			return updated;
+		}
+		catch (Exception e)
+		{
+			log(h.name() + " unavailable: " + e.getMessage());
+			return privateInfos.containsKey(source.path) ? List.of() : null;
+		}
+	}
+
+	/** Fetch a hub icon in the background, if it isn't cached yet */
 	void ensureIcon(PluginRow row)
 	{
 		PluginInfo info = row.info;
-		if (row.kind() != PluginRow.Kind.HUB || info == null || info.icon == null || Files.exists(info.icon)
+		if (!row.prebuilt() || info == null || info.icon == null || Files.exists(info.icon)
 			|| !iconsRequested.add(info.icon.toString()))
 		{
 			return;
 		}
-		PluginHub.Entry entry = hub.entries().get(row.path().getFileName().toString());
-		if (entry == null)
+		Task fetch;
+		String name = row.path().getFileName().toString();
+		if (row.kind() == PluginRow.Kind.HUB)
 		{
-			return;
+			PluginHub.Entry entry = hub.entries().get(name);
+			if (entry == null)
+			{
+				return;
+			}
+			fetch = () -> hub.icon(entry);
+		}
+		else
+		{
+			PrivateHub h = hubFor(row.source());
+			PrivateHub.Entry entry = h.entries().get(name);
+			if (entry == null)
+			{
+				return;
+			}
+			fetch = () -> h.icon(entry);
 		}
 		iconLoader.execute(() ->
 		{
 			try
 			{
-				hub.icon(entry);
+				fetch.run();
 				changed(false);
 			}
 			catch (Exception e)
@@ -589,6 +715,17 @@ final class Controller
 				iconsRequested.remove(info.icon.toString()); // try again later
 			}
 		});
+	}
+
+	/** Web page for a row's plugin: its Plugin Hub page, GitHub folder, or the private hub's repo link */
+	String webUrl(PluginRow row)
+	{
+		if (row.kind() == PluginRow.Kind.PRIVATE)
+		{
+			PrivateHub.Entry entry = hubFor(row.source()).entries().get(row.path().getFileName().toString());
+			return entry == null || entry.repo == null || entry.repo.isBlank() ? null : entry.repo;
+		}
+		return Sources.webUrl(row.source(), row.path());
 	}
 
 	/**
@@ -865,6 +1002,25 @@ final class Controller
 				row.building = false;
 			}
 		}
+		else if (row.kind() == PluginRow.Kind.PRIVATE)
+		{
+			PrivateHub h = hubFor(row.source());
+			PrivateHub.Entry entry = h.entries().get(row.path().getFileName().toString());
+			if (entry == null)
+			{
+				throw new IllegalStateException("no longer on " + h.name());
+			}
+			row.building = true;
+			changed(false);
+			try
+			{
+				jar = h.jar(entry);
+			}
+			finally
+			{
+				row.building = false;
+			}
+		}
 		else if (row.kind() == PluginRow.Kind.PROJECT)
 		{
 			Optional<Path> built = rebuild || row.needsBuild ? Optional.empty() : GradleBuilder.findJar(row.path());
@@ -992,6 +1148,10 @@ final class Controller
 			{
 				loadHub(false); // cached manifest; Pull refreshes it
 			}
+			else if (source.type == ManagerConfig.SourceType.PRIVATE_HUB)
+			{
+				loadPrivateHub(source, false);
+			}
 			else if (source.type != ManagerConfig.SourceType.FOLDER)
 			{
 				rescan(Path.of(source.path));
@@ -1037,6 +1197,13 @@ final class Controller
 					for (PluginInfo info : hubInfos)
 					{
 						next.add(row(existing, created, usedIds, PluginRow.Kind.HUB, info.dir, source, info));
+					}
+				}
+				else if (source.type == ManagerConfig.SourceType.PRIVATE_HUB)
+				{
+					for (PluginInfo info : privateInfos.getOrDefault(source.path, List.of()))
+					{
+						next.add(row(existing, created, usedIds, PluginRow.Kind.PRIVATE, info.dir, source, info));
 					}
 				}
 				else
@@ -1178,6 +1345,10 @@ final class Controller
 		{
 			name = "hub_" + path.getFileName();
 		}
+		else if (kind == PluginRow.Kind.PRIVATE)
+		{
+			name = "phub_" + path.getFileName();
+		}
 		else if (kind == PluginRow.Kind.JAR)
 		{
 			name = path.getFileName().toString().replaceAll("\\.jar$", "");
@@ -1220,7 +1391,8 @@ final class Controller
 	{
 		for (ManagerConfig.Source source : sources())
 		{
-			if (source.type == ManagerConfig.SourceType.GIT || source.type == ManagerConfig.SourceType.HUB)
+			if (source.type == ManagerConfig.SourceType.GIT || source.type == ManagerConfig.SourceType.HUB
+				|| source.type == ManagerConfig.SourceType.PRIVATE_HUB)
 			{
 				pullNow(source);
 			}
@@ -1229,13 +1401,18 @@ final class Controller
 
 	private void pullNow(ManagerConfig.Source source)
 	{
-		if (source.type == ManagerConfig.SourceType.HUB)
+		if (source.type == ManagerConfig.SourceType.HUB || source.type == ManagerConfig.SourceType.PRIVATE_HUB)
 		{
-			List<String> updated = loadHub(true);
+			boolean official = source.type == ManagerConfig.SourceType.HUB;
+			List<String> updated = official ? loadHub(true) : loadPrivateHub(source, true);
+			if (updated == null)
+			{
+				return;
+			}
 			refreshRows();
 			for (PluginRow row : rows)
 			{
-				if (row.kind() == PluginRow.Kind.HUB && updated.contains(row.path().getFileName().toString())
+				if (row.source() == source && row.prebuilt() && updated.contains(row.path().getFileName().toString())
 					&& isConnected() && row.enabled())
 				{
 					runNow(row, "Update", () -> loadRow(row, true));

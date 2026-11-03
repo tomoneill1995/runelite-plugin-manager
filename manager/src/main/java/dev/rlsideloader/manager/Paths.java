@@ -19,6 +19,11 @@ final class Paths
 	static final Path GIT_REPOS = HOME.resolve("repos");
 
 	static final Path RUNELITE_INSTALL = Path.of(System.getenv("LOCALAPPDATA"), "RuneLite");
+	/**
+	 * The launcher settings behind "RuneLite (configure)". The launcher keeps this next to the
+	 * install (not in ~/.runelite, which only holds the client's data).
+	 */
+	static final Path RUNELITE_SETTINGS = RUNELITE_INSTALL.resolve("settings.json");
 
 	private Paths()
 	{

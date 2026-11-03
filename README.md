@@ -30,6 +30,19 @@ You can launch more than one client. Each one shows up in the header, and a newl
 everything that's enabled loaded into it. With two or more running, a "Clients" selector appears:
 Enable, Disable and Reload apply to all of them, or to just the one you pick.
 
+## Jagex accounts
+
+Turn on **Settings ▾ → Jagex Launcher mode**. The manager puts its agent into RuneLite's own launcher
+settings (`settings.json` next to the RuneLite install in `%LOCALAPPDATA%\RuneLite`, the same file
+"RuneLite (configure)" edits), so a client started from the Jagex Launcher loads plugins too. Then start RuneLite from the Jagex Launcher as normal; the
+manager connects on its own once the client reaches the login screen.
+
+Several Jagex accounts at once: launch each one from the Jagex Launcher. Each client shows up in the
+header with its own entry in the Clients selector.
+
+Only the entries the manager adds are touched; the rest of that file is left alone, and turning the mode
+off removes them again. Your RuneLite install isn't modified.
+
 If a plugin depends on another one (a `project(':Other')` dependency in Gradle, or
 `@PluginDependency`), the dependency gets installed and loaded first. Reloading a dependency also
 reloads the plugins that use it.
@@ -96,8 +109,6 @@ without packaging, use `tools\manager.bat`, which runs the jar with RuneLite's b
 
 ## Known issues
 
-- Jagex accounts: Launch RuneLite starts RuneLite directly, so you won't have a Jagex Launcher session.
-  Adding the agent through the JVM arguments in "RuneLite (configure)" might work but I haven't tested it.
 - Kotlin plugins need the Kotlin standard library bundled into their jar because RuneLite doesn't
   include it. The same goes for any other third-party library a plugin uses.
 - Reloading is only as clean as the plugin's `shutDown`. If a plugin leaves threads or static state

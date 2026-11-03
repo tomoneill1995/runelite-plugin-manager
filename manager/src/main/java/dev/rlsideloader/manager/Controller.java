@@ -1,5 +1,6 @@
 package dev.rlsideloader.manager;
 
+import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -88,6 +89,11 @@ final class Controller
 		this.listener = listener;
 		worker.execute(() ->
 		{
+			// Keep the agent path in RuneLite's launcher settings current (it changes with each manager build)
+			if (config.jagexLauncherMode)
+			{
+				syncRuneLiteSettings(false);
+			}
 			rescanAll();
 			refreshRows();
 			poller.scheduleWithFixedDelay(this::poll, 0, 2, TimeUnit.SECONDS);
@@ -157,6 +163,11 @@ final class Controller
 	String jvmArgs()
 	{
 		return config.jvmArgs == null ? "" : config.jvmArgs.trim();
+	}
+
+	boolean isJagexLauncherMode()
+	{
+		return config.jagexLauncherMode;
 	}
 
 	/** Installed rows that need this one, directly or not */
@@ -322,6 +333,7 @@ final class Controller
 	{
 		config.disableTelemetry = disable;
 		save();
+		syncRuneLiteSettings(false);
 		log("Telemetry " + (disable ? "off" : "on") + " from the next launch");
 	}
 
@@ -336,9 +348,81 @@ final class Controller
 		String trimmed = args == null ? "" : args.trim();
 		config.jvmArgs = trimmed;
 		save();
+		syncRuneLiteSettings(false);
 		log(trimmed.isEmpty()
 			? "RuneLite JVM arguments cleared; applies from the next launch"
 			: "RuneLite JVM arguments set to \"" + trimmed + "\"; applies from the next launch");
+	}
+
+	void setJagexLauncherMode(boolean on)
+	{
+		config.jagexLauncherMode = on;
+		save();
+		syncRuneLiteSettings(true);
+	}
+
+	/**
+	 * Mirrors the agent (plus the JVM and client arguments) into RuneLite's own launcher settings
+	 * while Jagex Launcher mode is on, and removes them when it's off, so clients started by the
+	 * Jagex Launcher pick the agent up. Only entries this manager wrote are touched. Safe to call
+	 * repeatedly: it also refreshes the agent path after a manager update.
+	 */
+	private void syncRuneLiteSettings(boolean announce)
+	{
+		if (!config.jagexLauncherMode && config.jagexJvmArguments.isEmpty() && config.jagexClientArguments.isEmpty())
+		{
+			return; // never used: leave the user's settings.json alone
+		}
+		try
+		{
+			JsonObject settings = RuneLiteSettings.load();
+			List<String> wantJvm = new ArrayList<>();
+			List<String> wantClient = new ArrayList<>();
+			if (config.jagexLauncherMode)
+			{
+				wantJvm.add(RuneLiteLauncher.agentJvmArgument());
+				for (String s : jvmArgs().split("\\s+"))
+				{
+					if (!s.isEmpty())
+					{
+						wantJvm.add(s);
+					}
+				}
+				if (config.disableTelemetry)
+				{
+					wantClient.add("--disable-telemetry");
+				}
+			}
+			RuneLiteSettings.setManaged(settings, "jvmArguments", config.jagexJvmArguments, wantJvm);
+			RuneLiteSettings.setManaged(settings, "clientArguments", config.jagexClientArguments, wantClient);
+			RuneLiteSettings.save(settings);
+			config.jagexJvmArguments = wantJvm;
+			config.jagexClientArguments = wantClient;
+			save();
+
+			if (announce)
+			{
+				if (config.jagexLauncherMode)
+				{
+					log("Jagex Launcher mode on: agent written to " + Paths.RUNELITE_SETTINGS + ". Start RuneLite from the"
+						+ " Jagex Launcher (one launch per account for several accounts); plugins load once each client"
+						+ " reaches the login screen");
+					if ("REFLECT".equalsIgnoreCase(RuneLiteSettings.launchMode(settings)))
+					{
+						log("  Warning: RuneLite's launch mode is REFLECT, which can't load the agent."
+							+ " Set it to AUTO or JVM in \"RuneLite (configure)\"");
+					}
+				}
+				else
+				{
+					log("Jagex Launcher mode off: removed the agent from RuneLite's launcher settings");
+				}
+			}
+		}
+		catch (IOException | RuntimeException e)
+		{
+			log("Unable to update RuneLite's launcher settings (" + Paths.RUNELITE_SETTINGS + "): " + e.getMessage());
+		}
 	}
 
 	/**

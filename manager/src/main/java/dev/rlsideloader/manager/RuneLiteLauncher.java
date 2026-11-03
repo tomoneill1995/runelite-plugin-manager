@@ -41,16 +41,13 @@ final class RuneLiteLauncher
 			throw new IOException("RuneLite isn't installed at " + install);
 		}
 
-		Path agent = extractAgent();
 		ProcessBuilder pb = new ProcessBuilder(javaw.toString(), "-Xmx768m", "-Xss2m",
 			"-cp", launcherJar.toString(), "net.runelite.launcher.Launcher")
 			.directory(install.toFile())
 			.redirectOutput(ProcessBuilder.Redirect.DISCARD)
 			.redirectError(ProcessBuilder.Redirect.DISCARD);
 
-		// The manager decides what to load, so the agent's own folder autoload is off
-		// home: so the agent writes agent.json where this manager looks for it
-		String vmArgs = "-javaagent:" + agent + "=autoload=false;home=" + Paths.HOME;
+		String vmArgs = agentJvmArgument();
 		if (extraJvmArgs != null && !extraJvmArgs.isBlank())
 		{
 			vmArgs += " " + extraJvmArgs.trim();
@@ -66,6 +63,19 @@ final class RuneLiteLauncher
 			pb.environment().remove("RUNELITE_ARGS");
 		}
 		return pb.start();
+	}
+
+	/**
+	 * The -javaagent argument that attaches this manager's agent to a client. Used both for the
+	 * manager's own launches (via RUNELITE_VMARGS) and, in Jagex Launcher mode, written into
+	 * RuneLite's launcher settings so clients started by the Jagex Launcher get it too.
+	 * <p>
+	 * autoload=false: the manager decides what to load, so the agent's own folder autoload is off.
+	 * home: so the agent writes its info file where this manager looks for it.
+	 */
+	static String agentJvmArgument() throws IOException
+	{
+		return "-javaagent:" + extractAgent() + "=autoload=false;home=" + Paths.HOME;
 	}
 
 	/**

@@ -65,6 +65,11 @@ final class ManagerConfig
 	boolean pullOnLaunch = true;
 	/** Extra JVM arguments for the RuneLite client, whitespace separated; added to RUNELITE_VMARGS after the agent */
 	String jvmArgs = "";
+	/** Put the agent into RuneLite's own launcher settings, so clients started by the Jagex Launcher load plugins too */
+	boolean jagexLauncherMode;
+	/** Exactly what this manager last wrote into ~/.runelite/settings.json, so it can remove just those entries */
+	List<String> jagexJvmArguments = new ArrayList<>();
+	List<String> jagexClientArguments = new ArrayList<>();
 	List<Source> sources = new ArrayList<>();
 	/** Keyed by the row's path (repo folder or jar file) */
 	Map<String, RowSettings> rows = new LinkedHashMap<>();

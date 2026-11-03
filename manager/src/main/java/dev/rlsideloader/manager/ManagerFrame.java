@@ -279,6 +279,26 @@ final class ManagerFrame extends JFrame implements Controller.Listener
 		jvm.setToolTipText("Extra JVM arguments for the RuneLite client, e.g. -Xmx2g or -javaagent:... Applied from the next launch.");
 		jvm.addActionListener(e -> editJvmArgs());
 		menu.add(jvm);
+
+		JCheckBoxMenuItem jagex = new JCheckBoxMenuItem("Jagex Launcher mode", controller.isJagexLauncherMode());
+		jagex.setToolTipText("Also load plugins into clients started from the Jagex Launcher (Jagex accounts). "
+			+ "Puts the agent into RuneLite's own launcher settings; nothing in the install is modified.");
+		jagex.addActionListener(e ->
+		{
+			controller.setJagexLauncherMode(jagex.isSelected());
+			if (jagex.isSelected())
+			{
+				JOptionPane.showMessageDialog(this,
+					"Jagex Launcher mode is on.\n\n"
+						+ "Start RuneLite from the Jagex Launcher as normal. This manager connects on its own once the\n"
+						+ "client reaches the login screen.\n\n"
+						+ "Several accounts: launch each one from the Jagex Launcher. Every client shows up here with its\n"
+						+ "own entry in the Clients selector.\n\n"
+						+ "The Launch button here still works for non-Jagex logins.",
+					"Jagex Launcher mode", JOptionPane.INFORMATION_MESSAGE);
+			}
+		});
+		menu.add(jagex);
 		menu.addSeparator();
 
 		JMenuItem data = new JMenuItem("Open data folder");
